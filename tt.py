@@ -7,6 +7,7 @@ from google import genai
 from google.genai import types
 model_name = 'gemini-2.0-flash-live-001'
 system_prompt = 'you are helpful travel assistant'
+gemini_api_key = '[your gemini api key]'
 class AudioUtils:
     @staticmethod
     def encode_bytes(data: bytes) -> str:
@@ -70,7 +71,7 @@ class GeminiLiveAudio:
     def init_client(self):
         """Initialize Gemini client"""
         try:
-            self.client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))            
+            self.client = genai.Client(api_key=gemini_api_key)            
             self.update_status("Client initialized")
             asyncio.create_task(self.init_session())
         except Exception as e:
