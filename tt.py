@@ -2,12 +2,32 @@ import asyncio
 import base64
 import os
 import numpy as np
+import time
 import pyaudio
 from google import genai
 from google.genai import types
 model_name = 'gemini-2.0-flash-live-001'
-system_prompt = 'you are helpful travel assistant'
-gemini_api_key = '[your gemini api key]'
+system_prompt = 'you are helpful booking flight assistant'
+
+
+search_flight_inf = {
+            "name": "search_flight_inf",
+            "description": "Tìm danh sách các chuyến bay dựa vào các thông tin đã cho",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "depart": {"type": "string", "description": "tên hoặc mã sân bay nơi khởi hành (ví dụ Đà Nẵng hoặc DAD)"},
+                    "destination": {"type": "string", "description": "tên hoặc mã sân bay của điểm đến (ví dụ Hà Nội hoặc HAN)"},
+                },
+                "required": ["depart", "destination"]
+            }
+        }
+tools = [{"function_declarations": [search_flight_inf]}]
+
+def search_flight_inf(depart, destination):
+    time.sleep(4)
+    return (f'find 2 flight from {depart} to {destination}: 20:00 - VNA - 2.000.000 /n 21:00 - VJA - 1.800.000')
+
 class AudioUtils:
     @staticmethod
     def encode_bytes(data: bytes) -> str:
@@ -71,7 +91,7 @@ class GeminiLiveAudio:
     def init_client(self):
         """Initialize Gemini client"""
         try:
-            self.client = genai.Client(api_key=gemini_api_key)            
+            self.client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))            
             self.update_status("Client initialized")
             asyncio.create_task(self.init_session())
         except Exception as e:
@@ -85,6 +105,7 @@ class GeminiLiveAudio:
         config = {
         "response_modalities": ["AUDIO"],
         "system_instruction": system_prompt,
+        "tools": tools,
         "realtime_input_config": {
         "automatic_activity_detection": {
                     "disabled": False, # default
@@ -179,6 +200,7 @@ class GeminiLiveAudio:
     async def _process_audio(self):#send
         """Process audio data and send to Gemini"""
         while self.is_recording:
+            print('send')
             try:
                 if self.endturn == True:
                     break
@@ -196,10 +218,29 @@ class GeminiLiveAudio:
                 continue        
     
     async def _listen_for_gemini_responses(self):#get
+        print('get')
             # Iterate asynchronously over responses from the Gemini session
         async for response in self.session.receive():
-            audio_data_bytes = response.data
-            await self.playback_queue.put(audio_data_bytes)
+
+            if response.tool_call:
+                function_responses = []
+                for fc in response.tool_call.function_calls:
+                    if fc.name == 'search_flight_inf':
+                        result = search_flight_inf(fc.args.get('depart'), fc.args.get('destination'))
+                        print(result)
+                        function_response = types.FunctionResponse(
+                            id=fc.id,
+                            name=fc.name,
+                            response= {
+                                "result": result,
+                            }
+                        )
+                        function_responses.append(function_response)
+                await self.session.send_tool_response(function_responses=function_responses)
+            elif response.data:
+                await self.playback_queue.put(response.data)
+            if getattr(response.server_content, 'turn_complete', False):
+                await self.playback_queue.put("end")    
 
     
     async def _handle_playback(self):#read
@@ -207,8 +248,9 @@ class GeminiLiveAudio:
             try:
                 # Get audio data for playback
                 audio_data = await asyncio.wait_for(self.playback_queue.get(), timeout=3)
-                if audio_data == None:
+                if audio_data == 'end':#xem lại còn cahcs nào thay audiodata == None không, chỗ listen for gemini
                     self.endturn = True
+                    print('xxx')
                     break
                 if self.output_stream and self.output_stream.is_active():
                     # Convert and play audio
@@ -216,6 +258,7 @@ class GeminiLiveAudio:
                     int16_data = (audio_bytes * 32768).astype(np.int16)
                     self.output_stream.write(int16_data.tobytes())
                     self.stop_put = True
+                    print('read')
             except asyncio.TimeoutError:
                 print(3)
                 continue
